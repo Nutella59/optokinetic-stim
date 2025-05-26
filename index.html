@@ -1,311 +1,209 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8" />
-<title>Stimulation Optocinétique - Caméra, VR, et options</title>
-<style>
-  html, body {
-    margin: 0; padding: 0; overflow: hidden; background: black; height: 100%;
-    color: white; font-family: sans-serif;
-  }
-  #controls {
-    position: fixed;
-    top: 10px; left: 10px; background: rgba(0,0,0,0.7);
-    padding: 10px; border-radius: 8px; max-width: 300px;
-    z-index: 10;
-    user-select: none;
-  }
-  label {
-    display: block;
-    margin: 8px 0 4px;
-  }
-  input[type=number], select {
-    width: 100%;
-    padding: 4px;
-    border-radius: 4px;
-    border: none;
-    font-size: 14px;
-  }
-  input[type=checkbox] {
-    transform: scale(1.3);
-    margin-right: 6px;
-    vertical-align: middle;
-  }
-  button {
-    margin-top: 10px;
-    width: 100%;
-    padding: 10px;
-    font-size: 16px;
-    border: none;
-    border-radius: 6px;
-    background: #2196F3;
-    color: white;
-    cursor: pointer;
-  }
-  canvas, video {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100vw; height: 100vh;
-    object-fit: cover;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <title>Stimulation Optocinétique VR Sphérique</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: black;
+      overflow: hidden;
+      color: white;
+      font-family: sans-serif;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      background: rgba(0,0,0,0.6);
+      padding: 10px;
+      border-radius: 8px;
+    }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: block;
+    }
+    label {
+      margin-right: 10px;
+    }
+  </style>
 </head>
 <body>
-<div id="controls">
-  <label>Colonnes: <input type="number" id="cols" value="10" min="1" /></label>
-  <label>Lignes: <input type="number" id="rows" value="6" min="1" /></label>
-  <label>Direction:
-    <select id="direction">
-      <option value="right">Droite</option>
-      <option value="left">Gauche</option>
-      <option value="up">Haut</option>
-      <option value="down">Bas</option>
-    </select>
-  </label>
-  <label>Vitesse: <input type="number" id="speed" value="2" step="0.1" min="0.1" /></label>
-  <label>Inversion (secondes): <input type="number" id="invertTime" value="15" min="1" /></label>
-  <label><input type="checkbox" id="sphereMode" /> Effet sphérique</label>
-  <label><input type="checkbox" id="useCamera" /> Fond caméra live</label>
-  <label><input type="checkbox" id="showPoints" checked /> Afficher points</label>
-  <label><input type="checkbox" id="invertColors" /> Inverser couleurs (fond blanc)</label>
-  <label><input type="checkbox" id="vrMode" /> Mode VR (double écran)</label>
-  <button id="pauseBtn">Pause</button>
-</div>
+  <div id="controls">
+    <label>Colonnes: <input type="number" id="cols" value="10" min="1" /></label>
+    <label>Lignes: <input type="number" id="rows" value="6" min="1" /></label>
+    <label>Direction:
+      <select id="direction">
+        <option value="right">Droite ↔</option>
+        <option value="left">Gauche ↔</option>
+        <option value="up">Haut ↕</option>
+        <option value="down">Bas ↕</option>
+      </select>
+    </label>
+    <label>Vitesse: <input type="number" id="speed" value="2" step="0.5" min="0.1" /></label>
+    <label>Inversion (s): <input type="number" id="invertTime" value="15" min="1" /></label>
+    <label><input type="checkbox" id="vrMode" /> Mode VR</label>
+    <label><input type="checkbox" id="sphereMode" /> Effet sphérique</label>
+    <button onclick="startAnimation()">Lancer</button>
+    <button onclick="togglePause()">⏸ Pause / ▶️ Reprendre</button>
+  </div>
 
-<video id="video" autoplay muted playsinline style="display:none;"></video>
-<canvas id="canvas"></canvas>
+  <canvas id="canvas"></canvas>
+  <canvas id="maskCanvas"></canvas>
 
-<script>
-  const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d');
-  const video = document.getElementById('video');
-  const pauseBtn = document.getElementById('pauseBtn');
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const maskCanvas = document.getElementById("maskCanvas");
+    const maskCtx = maskCanvas.getContext("2d");
 
-  let cols = 10, rows = 6;
-  let direction = "right";
-  let speed = 2;
-  let invertInterval = 15000;
-  let lastInvertTime = Date.now();
-  let isPaused = false;
-  let sphereEnabled = false;
-  let useCamera = false;
-  let showPoints = true;
-  let invertColors = false;
-  let vrMode = false;
+    let points = [], isPaused = false;
+    let cols = 10, rows = 6, direction = "right", baseDirection = "right";
+    let speed = 2, invertInterval = 15000, lastInvertTime = Date.now();
+    let vrEnabled = false, sphereEnabled = false;
 
-  let points = [];
-
-  function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-  }
-
-  window.addEventListener('resize', () => {
-    resize();
-    initPoints();
-  });
-
-  function initPoints() {
-    points = [];
-    const spacingX = canvas.width / cols;
-    const spacingY = canvas.height / rows;
-    for(let i = 0; i < cols; i++) {
-      for(let j = 0; j < rows; j++) {
-        points.push({
-          x: i * spacingX + spacingX / 2,
-          y: j * spacingY + spacingY / 2
-        });
-      }
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      maskCanvas.width = window.innerWidth;
+      maskCanvas.height = window.innerHeight;
+      drawMask();
     }
-  }
 
-  function invertDirection() {
-    if(direction === "right") direction = "left";
-    else if(direction === "left") direction = "right";
-    else if(direction === "up") direction = "down";
-    else if(direction === "down") direction = "up";
-  }
+    function drawMask() {
+      maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+      if (!vrEnabled) return;
 
-  function update() {
-    if(Date.now() - lastInvertTime > invertInterval) {
-      invertDirection();
+      const w = maskCanvas.width / 2;
+      const h = maskCanvas.height;
+      maskCtx.fillStyle = "black";
+      maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+
+      maskCtx.globalCompositeOperation = "destination-out";
+      [0, w].forEach(x => {
+        maskCtx.beginPath();
+        maskCtx.arc(x + w / 2, h / 2, Math.min(w, h) / 2.1, 0, 2 * Math.PI);
+        maskCtx.fill();
+      });
+      maskCtx.globalCompositeOperation = "source-over";
+    }
+
+    window.addEventListener("resize", () => {
+      resizeCanvas();
+      startAnimation();
+    });
+
+    function startAnimation() {
+      cols = parseInt(document.getElementById("cols").value);
+      rows = parseInt(document.getElementById("rows").value);
+      baseDirection = document.getElementById("direction").value;
+      direction = baseDirection;
+      speed = parseFloat(document.getElementById("speed").value);
+      invertInterval = parseInt(document.getElementById("invertTime").value) * 1000;
       lastInvertTime = Date.now();
-    }
-    for(let p of points) {
-      switch(direction) {
-        case "right": p.x += speed; break;
-        case "left": p.x -= speed; break;
-        case "up": p.y -= speed; break;
-        case "down": p.y += speed; break;
-      }
-      if(p.x > canvas.width) p.x -= canvas.width;
-      if(p.x < 0) p.x += canvas.width;
-      if(p.y > canvas.height) p.y -= canvas.height;
-      if(p.y < 0) p.y += canvas.height;
-    }
-  }
+      vrEnabled = document.getElementById("vrMode").checked;
+      sphereEnabled = document.getElementById("sphereMode").checked;
 
-  function drawEye(offsetX, offsetY, width, height) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(offsetX, 0, width, height);
-    ctx.clip();
+      const spacingX = canvas.width / cols;
+      const spacingY = canvas.height / rows;
+      points = [];
 
-    if(useCamera && video.readyState === video.HAVE_ENOUGH_DATA) {
-      ctx.drawImage(video, offsetX, 0, width, height);
-    } else {
-      ctx.fillStyle = invertColors ? "white" : "black";
-      ctx.fillRect(offsetX, 0, width, height);
-    }
-
-    if(showPoints) {
-      ctx.fillStyle = invertColors ? "black" : "white";
-      const centerX = offsetX + width / 2;
-      const centerY = height / 2;
-
-      for(let p of points) {
-        let x = p.x;
-        let y = p.y;
-
-        if(sphereEnabled) {
-          const dx = x - centerX;
-          const dy = y - centerY;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          const maxDist = Math.sqrt((width/2)*(width/2) + (height/2)*(height/2));
-          const sphereRadius = maxDist * 0.8;
-
-          const factor = 1 - (dist / sphereRadius);
-          if(factor > 0) {
-            x = centerX + dx * (1 + 0.3 * factor * Math.sin(dist / 30));
-            y = centerY + dy * (1 + 0.3 * factor * Math.sin(dist / 30));
-          }
+      for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+          points.push({
+            x: i * spacingX + spacingX / 2,
+            y: j * spacingY + spacingY / 2
+          });
         }
-        ctx.beginPath();
-        ctx.arc(offsetX + x, y, 5, 0, Math.PI*2);
-        ctx.fill();
+      }
+      drawMask();
+    }
+
+    function invertDirection() {
+      if (baseDirection === "right") direction = (direction === "right") ? "left" : "right";
+      else if (baseDirection === "left") direction = (direction === "left") ? "right" : "left";
+      else if (baseDirection === "up") direction = (direction === "up") ? "down" : "up";
+      else if (baseDirection === "down") direction = (direction === "down") ? "up" : "down";
+    }
+
+    function update() {
+      if (Date.now() - lastInvertTime > invertInterval) {
+        invertDirection();
+        lastInvertTime = Date.now();
+      }
+
+      for (let point of points) {
+        if (direction === "right") point.x += speed;
+        if (direction === "left") point.x -= speed;
+        if (direction === "up") point.y -= speed;
+        if (direction === "down") point.y += speed;
+
+        if (point.x > canvas.width) point.x -= canvas.width;
+        if (point.x < 0) point.x += canvas.width;
+        if (point.y > canvas.height) point.y -= canvas.height;
+        if (point.y < 0) point.y += canvas.height;
       }
     }
-    ctx.restore();
-  }
 
-  function draw() {
-    if(vrMode) {
-      const halfWidth = canvas.width / 2;
-      drawEye(0, 0, halfWidth, canvas.height);
-      drawEye(halfWidth, 0, halfWidth, canvas.height);
-    } else {
-      if(useCamera && video.readyState === video.HAVE_ENOUGH_DATA) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      } else {
-        ctx.fillStyle = invertColors ? "white" : "black";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
+    function projectToSphere(x, y) {
+      const cx = canvas.width / 2, cy = canvas.height / 2;
+      const dx = (x - cx) / cx, dy = (y - cy) / cy;
+      const r = Math.sqrt(dx * dx + dy * dy);
+      const scale = Math.cos(r * Math.PI / 2);
+      return { x: cx + dx * cx * scale, y: cy + dy * cy * scale };
+    }
 
-      if(showPoints) {
-        ctx.fillStyle = invertColors ? "black" : "white";
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-
-        for(let p of points) {
-          let x = p.x;
-          let y = p.y;
-
-          if(sphereEnabled) {
-            const dx = x - centerX;
-            const dy = y - centerY;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            const maxDist = Math.sqrt(centerX*centerX + centerY*centerY);
-            const sphereRadius = maxDist * 0.8;
-
-            const factor = 1 - (dist / sphereRadius);
-            if(factor > 0) {
-              x = centerX + dx * (1 + 0.3 * factor * Math.sin(dist / 30));
-              y = centerY + dy * (1 + 0.3 * factor * Math.sin(dist / 30));
+    function drawScene(offsetX = 0) {
+      ctx.fillStyle = "white";
+      for (let point of points) {
+        for (let dx of [-canvas.width, 0, canvas.width]) {
+          for (let dy of [-canvas.height, 0, canvas.height]) {
+            let px = point.x + dx + offsetX;
+            let py = point.y + dy;
+            if (sphereEnabled) {
+              const projected = projectToSphere(px, py);
+              px = projected.x;
+              py = projected.y;
             }
+            ctx.beginPath();
+            ctx.arc(px, py, 5, 0, Math.PI * 2);
+            ctx.fill();
           }
-          ctx.beginPath();
-          ctx.arc(x, y, 5, 0, Math.PI*2);
-          ctx.fill();
         }
       }
     }
-  }
 
-  function animate() {
-    if(!isPaused) {
-      update();
-      draw();
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (vrEnabled) {
+        ctx.save(); ctx.rect(0, 0, canvas.width / 2, canvas.height); ctx.clip();
+        drawScene(0); ctx.restore();
+
+        ctx.save(); ctx.rect(canvas.width / 2, 0, canvas.width / 2, canvas.height); ctx.clip();
+        drawScene(-canvas.width / 2); ctx.restore();
+      } else {
+        drawScene(0);
+      }
     }
-    requestAnimationFrame(animate);
-  }
 
-  pauseBtn.onclick = () => {
-    isPaused = !isPaused;
-    pauseBtn.textContent = isPaused ? "Reprendre" : "Pause";
-  };
-
-  // Camera
-  async function startCamera() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-      video.srcObject = stream;
-      video.style.display = 'block';
-    } catch(e) {
-      alert("Erreur accès caméra: " + e.message);
-      useCameraCheckbox.checked = false;
-      useCamera = false;
+    function animate() {
+      if (!isPaused) {
+        update();
+        draw();
+      }
+      requestAnimationFrame(animate);
     }
-  }
-  function stopCamera() {
-    if(video.srcObject) {
-      video.srcObject.getTracks().forEach(t => t.stop());
-      video.srcObject = null;
+
+    function togglePause() {
+      isPaused = !isPaused;
     }
-    video.style.display = 'none';
-  }
 
-  const colsInput = document.getElementById('cols');
-  const rowsInput = document.getElementById('rows');
-  const directionInput = document.getElementById('direction');
-  const speedInput = document.getElementById('speed');
-  const invertInput = document.getElementById('invertTime');
-  const sphereCheckbox = document.getElementById('sphereMode');
-  const useCameraCheckbox = document.getElementById('useCamera');
-  const showPointsCheckbox = document.getElementById('showPoints');
-  const invertColorsCheckbox = document.getElementById('invertColors');
-  const vrModeCheckbox = document.getElementById('vrMode');
-
-  function updateSettings() {
-    cols = Math.max(1, parseInt(colsInput.value));
-    rows = Math.max(1, parseInt(rowsInput.value));
-    direction = directionInput.value;
-    speed = Math.max(0.1, parseFloat(speedInput.value));
-    invertInterval = Math.max(1000, parseInt(invertInput.value) * 1000);
-    sphereEnabled = sphereCheckbox.checked;
-    showPoints = showPointsCheckbox.checked;
-    invertColors = invertColorsCheckbox.checked;
-    vrMode = vrModeCheckbox.checked;
-
-    const newUseCamera = useCameraCheckbox.checked;
-    if(newUseCamera !== useCamera) {
-      useCamera = newUseCamera;
-      if(useCamera) startCamera();
-      else stopCamera();
-    }
-    initPoints();
-  }
-
-  [colsInput, rowsInput, directionInput, speedInput, invertInput,
-   sphereCheckbox, useCameraCheckbox, showPointsCheckbox,
-   invertColorsCheckbox, vrModeCheckbox].forEach(el => {
-    el.addEventListener('input', updateSettings);
-  });
-
-  window.onload = () => {
-    resize();
-    updateSettings();
+    resizeCanvas();
+    startAnimation();
     animate();
-  }
-</script>
+  </script>
 </body>
 </html>
